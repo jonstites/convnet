@@ -42,7 +42,7 @@ class ImageDataset:
             self._index_in_epoch = batch_size - rest_num_examples
             end = self._index_in_epoch
             images_last_part = self.images[start:end]
-            images_last_part = self.labels[start:end]
+            labels_last_part = self.labels[start:end]
             batch_images = np.concatenate((images_first_part, images_last_part), axis=0)
             batch_labels = np.concatenate((labels_first_part, labels_last_part), axis=0)
             return batch_images, batch_labels
@@ -56,9 +56,6 @@ class ImageDataset:
         self.images = self.images[perm]
         self.labels = self.labels[perm]
 
-    def whiten():
-        pass
-
     
 class NotMNISTDataset:
 
@@ -70,18 +67,16 @@ class NotMNISTDataset:
         self._find_and_remove_duplicates()
         print("splitting")
         self.train, self.validate = self.train.train_validate_split()
+        self.whiten_images()
         
     def load_data(self, data_dir):
         image_filenames, char_labels = self._get_image_filenames_and_labels(data_dir)
-        maxnum = 5000
         labels = []
         images = []
         for i, image_file in enumerate(image_filenames):
-            if i >= maxnum:
-                break
             try:
                 image = imageio.imread(image_file).astype(np.uint8)
-                images.append(image)
+                images.append(image.reshape([28, 28, 1]))
                 labels.append(ord(char_labels[i]) - ord('A'))
             except ValueError:
                 print("can't open file: ", image_file)
@@ -126,3 +121,11 @@ class NotMNISTDataset:
                 images.append(image)
                 labels.append(label)
         return ImageDataset(np.asarray(images), np.asarray(labels))
+
+    def whiten_images(self):
+        mean = np.mean(self.train.images)
+        std = np.std(self.train.images)
+
+        self.train.images = (self.train.images - mean) / std
+        self.validate.images = (self.validate.images - mean) / std
+        self.test.images = (self.test.images - mean) / std        

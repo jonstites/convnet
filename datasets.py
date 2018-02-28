@@ -15,6 +15,7 @@ class ImageDataset:
         self._epochs_completed = 0
         self._index_in_epoch = 0
         self._num_examples = self.images.shape[0]
+        self._shuffle_data()
 
     def train_validate_split(self, train_fraction=0.9):
         np.random.seed(0)
@@ -73,6 +74,7 @@ class NotMNISTDataset:
         image_filenames, char_labels = self._get_image_filenames_and_labels(data_dir)
         labels = []
         images = []
+
         for i, image_file in enumerate(image_filenames):
             try:
                 image = imageio.imread(image_file).astype(np.uint8)

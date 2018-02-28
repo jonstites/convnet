@@ -38,17 +38,15 @@ def main(train_dir, test_dir, model_dir=".", batch_size=32, epochs=100, save_per
         model = load_model(last_model_file)
     else:
         model = Sequential()
-        model.add(Conv2D(filters=100, kernel_size=5, strides=2, input_shape=(28, 28, 1), activation="relu", kernel_regularizer=regularizers.l2(0.0001)))
-        model.add(BatchNormalization())
-            
-        model.add(Conv2D(filters=100, kernel_size=3, activation="relu", kernel_regularizer=regularizers.l2(0.0001)))
-        model.add(BatchNormalization())
-            
-        model.add(Conv2D(filters=100, kernel_size=3, activation="relu", kernel_regularizer=regularizers.l2(0.0001)))
+        model.add(Conv2D(filters=64, kernel_size=5, input_shape=(28, 28, 1), activation="relu", kernel_regularizer=regularizers.l2(0.0001), padding="same"))
         model.add(BatchNormalization())
 
+        for _ in range(5):
+            model.add(Conv2D(filters=256, kernel_size=3, activation="relu", strides=2, kernel_regularizer=regularizers.l2(0.0001),padding="same"))
+            model.add(BatchNormalization())
+
         model.add(Flatten())
-        model.add(Dense(10, kernel_regularizer=regularizers.l2(0.0001)))
+        model.add(Dense(10, kernel_regularizer=regularizers.l2(0.0001), activation="softmax"))
         model.compile(optimizer='Adam',
                       loss='sparse_categorical_crossentropy',
                       metrics=['accuracy'])
@@ -59,10 +57,16 @@ def main(train_dir, test_dir, model_dir=".", batch_size=32, epochs=100, save_per
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)    
 
-    not_mnist = datasets.NotMNISTDataset(train_dir, test_dir)    
+    not_mnist = datasets.NotMNISTDataset(train_dir, test_dir)
+
+    x_train = not_mnist.train.images
+    y_train = not_mnist.train.labels
+    x_val = not_mnist.validate.images
+    y_val = not_mnist.validate.labels
+
     model.fit(
-        not_mnist.train.images, not_mnist.train.labels, batch_size=batch_size,
-        validation_data=(not_mnist.validate.images, not_mnist.validate.labels),
+        x_train, y_train, batch_size=batch_size,
+        validation_data=(x_val, y_val),
         epochs=epochs, callbacks=[checkpointer], initial_epoch=last_epoch)
 
     

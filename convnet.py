@@ -2,92 +2,74 @@
 
 import argh
 import datasets
+import glob
 import numpy as np
-import tensorflow as tf
+import keras
+from keras.callbacks import ModelCheckpoint
+from keras.models import Sequential, load_model
+from keras.layers import Dense, Conv2D, Flatten, BatchNormalization
+from keras.callbacks import ModelCheckpoint
+from keras import regularizers
+import os
 
-def build_graph():
-    g = tf.Graph()
-    with g.as_default():
 
-        is_training = tf.placeholder(dtype=bool, shape=None, name="is_training")
-        images = tf.placeholder(dtype=np.float32, shape=[None, 28, 28, 1], name="images")
-        labels = tf.placeholder(dtype=np.int32, shape=[None], name="labels")
-        one_hot_labels = tf.one_hot(labels, 10)
 
-        weights_regularizer=tf.contrib.layers.l2_regularizer(1e-4)
+def find_model_file(model_dir, weights_filename):
+    weights_regex = os.path.join(model_dir, "model-*.hdf5")
+    weights_files = glob.glob(weights_regex)
+    best_weights_file = None
+    best_epoch = 0
 
-        out_channels = 64
-        large_kernel_size = 5
-        small_kernel_size = 3
+    for weights_file in weights_files:
+        base_name = os.path.basename(weights_file)
+        epoch = int(base_name.split("-")[1])
+        if epoch > best_epoch:
+            best_epoch = epoch
+            best_weights_file = weights_file
+    return best_weights_file, best_epoch
 
-        h = images
-        
-        h1 = tf.contrib.layers.conv2d(h, num_outputs=out_channels, kernel_size=large_kernel_size, weights_regularizer=weights_regularizer)
 
-        h2 = tf.contrib.layers.batch_norm(h1, is_training=is_training)
-        h3 = tf.contrib.layers.conv2d(h2, num_outputs=out_channels, kernel_size=small_kernel_size, weights_regularizer=weights_regularizer)
-        h4 = tf.contrib.layers.batch_norm(h3, is_training=is_training)
-        h5 = tf.contrib.layers.conv2d(h4, num_outputs=out_channels, kernel_size=small_kernel_size, weights_regularizer=weights_regularizer)
-        h6 = tf.concat([h1, h5], axis=-1)
-        h = tf.contrib.layers.batch_norm(h6, is_training=is_training)
+def main(train_dir, test_dir, model_dir=".", batch_size=32, epochs=100, save_period=10):
 
-        h = tf.contrib.layers.flatten(h)
-        logits = tf.contrib.layers.fully_connected(h, num_outputs=10, activation_fn=None)
+    
+    model_filepath = os.path.join(model_dir, "model-{epoch:02d}-{val_loss:.2f}.hdf5")
+    last_model_file, last_epoch = find_model_file(model_dir, model_filepath)
+    if last_model_file:
+        model = load_model(last_model_file)
+    else:
+        model = Sequential()
+        model.add(Conv2D(filters=64, kernel_size=5, input_shape=(28, 28, 1), activation="relu", kernel_regularizer=regularizers.l2(0.0001), padding="same"))
+        model.add(BatchNormalization())
 
-        reg_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-        cross_entropy_loss = tf.identity(tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=one_hot_labels)), name="loss")
-        loss = cross_entropy_loss + reg_losses
-        
-        correct = tf.equal(tf.argmax(one_hot_labels, 1), tf.argmax(logits, 1))
-        accuracy = tf.reduce_mean(tf.cast(correct, tf.float32), name="accuracy")
-        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-        with tf.control_dependencies(update_ops):
-            optimizer = tf.train.AdamOptimizer(1e-4).minimize(loss, name="optimizer")        
-    return g
+        for _ in range(5):
+            model.add(Conv2D(filters=256, kernel_size=3, activation="relu", strides=2, kernel_regularizer=regularizers.l2(0.0001),padding="same"))
+            model.add(BatchNormalization())
 
-def main(train_dir, test_dir):
+        model.add(Flatten())
+        model.add(Dense(10, kernel_regularizer=regularizers.l2(0.0001), activation="softmax"))
+        model.compile(optimizer='Adam',
+                      loss='sparse_categorical_crossentropy',
+                      metrics=['accuracy'])
+
+    print(model.summary())
+    checkpointer = ModelCheckpoint(filepath=model_filepath, verbose=1, save_best_only=False, period=save_period)
+
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)    
+
     not_mnist = datasets.NotMNISTDataset(train_dir, test_dir)
-    graph = build_graph()
-    batch_size = 128
-    with tf.Session(graph=graph) as sess:
-        sess.run(tf.global_variables_initializer())
-        prev_epoch = 0
-        while not_mnist.train._epochs_completed < 10:
-            images, labels = not_mnist.train.next_batch(batch_size)
-            feed = {"images:0": images, "labels:0": labels, "is_training:0": True}
-            loss, _ = sess.run(["loss:0", "optimizer"], feed_dict=feed)
 
-            if not_mnist.train._epochs_completed > prev_epoch:
-                losses = []
-                accuracies = []
-                while not_mnist.validate._epochs_completed < not_mnist.train._epochs_completed:
-                    images, labels = not_mnist.validate.next_batch(batch_size)
-                    feed = {"images:0": images, "labels:0": labels, "is_training:0": False}
-                    loss, accuracy = sess.run(["loss:0", "accuracy:0"], feed_dict=feed)
-                    losses.append(loss)
-                    accuracies.append(accuracy)
-                mean_loss = np.mean(losses)
-                mean_accuracy = np.mean(accuracies)
-                print("finished epoch: ", not_mnist.train._epochs_completed - 1)
-                print("mean validate loss:", mean_loss)
-                print("mean validate accuracy:", mean_accuracy)
-                prev_epoch = not_mnist.train._epochs_completed
+    x_train = not_mnist.train.images
+    y_train = not_mnist.train.labels
+    x_val = not_mnist.validate.images
+    y_val = not_mnist.validate.labels
 
+    model.fit(
+        x_train, y_train, batch_size=batch_size,
+        validation_data=(x_val, y_val),
+        epochs=epochs, callbacks=[checkpointer], initial_epoch=last_epoch)
 
-        losses = []
-        accuracies = []
-        while not_mnist.train._epochs_completed < 11:
-            images, labels = not_mnist.train.next_batch(batch_size)
-            feed = {"images:0": images, "labels:0": labels, "is_training:0": False}
-            loss, accuracy = sess.run(["loss:0", "accuracy:0"], feed_dict=feed)
-            losses.append(loss)
-            accuracies.append(accuracy)
-        mean_loss = np.mean(losses)
-        mean_accuracy = np.mean(accuracies)
-        print("finished epoch: ", not_mnist.train._epochs_completed - 1)
-        print("mean train loss:", mean_loss)
-        print("mean train accuracy:", mean_accuracy)
-                
+    
                 
 if __name__ == "__main__":
     argh.dispatch_command(main)
